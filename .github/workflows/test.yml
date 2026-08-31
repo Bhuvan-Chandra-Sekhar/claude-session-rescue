@@ -31,12 +31,18 @@ jobs:
           - { os: ubuntu-latest, python: "3.11" }
           - { os: ubuntu-latest, python: "3.12" }
           - { os: ubuntu-latest, python: "3.13" }
-          # The oldest and newest supported Python on the other two platforms.
-          # This matters more than usual here: the slug rule was only ever
-          # verified on Windows, and the POSIX behaviour is documented as
-          # inferred. These jobs are the first real test of that inference.
-          # macOS 3.9 runs on macos-13, because the arm64 runners do not ship it.
-          - { os: macos-13, python: "3.9" }
+          # The other two platforms matter more than usual here: the slug rule
+          # was only ever verified on Windows, and the POSIX behaviour is
+          # documented as inferred, so these are the first real test of it.
+          #
+          # Both macOS cells run on macos-latest. The older-Python cell used to
+          # be pinned to macos-13 (the last image shipping Python 3.9), but that
+          # image is being retired: jobs targeting it queue for a very long time
+          # instead of failing fast. Python 3.9 itself is still covered on
+          # Linux and Windows, and what macOS uniquely exercises is the
+          # platform -- case-insensitive filesystem, arm64 -- not the language
+          # version. Not worth a 20-minute queue.
+          - { os: macos-latest, python: "3.11" }
           - { os: macos-latest, python: "3.13" }
           - { os: windows-latest, python: "3.9" }
           - { os: windows-latest, python: "3.13" }
