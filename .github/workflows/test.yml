@@ -1,0 +1,128 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only token: this workflow never needs to write to the repository.
+permissions:
+  contents: read
+
+# A new push supersedes an in-flight run on the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red cell should not hide the state of the others -- when a platform
+      # breaks we want to see exactly which ones.
+      fail-fast: false
+      matrix:
+        include:
+          # Every supported Python, on the cheapest runner.
+          - { os: ubuntu-latest, python: "3.9" }
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.13" }
+          # The oldest and newest supported Python on the other two platforms.
+          # This matters more than usual here: the slug rule was only ever
+          # verified on Windows, and the POSIX behaviour is documented as
+          # inferred. These jobs are the first real test of that inference.
+          # macOS 3.9 runs on macos-13, because the arm64 runners do not ship it.
+          - { os: macos-13, python: "3.9" }
+          - { os: macos-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.9" }
+          - { os: windows-latest, python: "3.13" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -v
+
+      - name: Smoke-test the console entry point
+        run: |
+          claude-session-rescue --version
+          claude-session-rescue --help
+
+  no-runtime-dependencies:
+    name: no runtime dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install without the dev extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Assert the package pulled in nothing else
+        # The README claims zero runtime dependencies and that installing it
+        # cannot be broken by somebody else's release. This turns that claim
+        # into something CI enforces rather than something we remember.
+        run: |
+          python - <<'PY'
+          import sys
+          from importlib import metadata
+
+          requires = metadata.requires("claude-session-rescue") or []
+          runtime = [r for r in requires if "extra ==" not in r]
+          if runtime:
+              print("Unexpected runtime dependencies:", runtime)
+              sys.exit(1)
+          print("Runtime dependencies: none, as documented.")
+          PY
+
+      - name: The tool still runs with nothing else installed
+        run: |
+          claude-session-rescue --version
+          # No session store on a fresh runner: the tool must say so clearly and
+          # exit 1, not raise. Exit 1 here is the expected, correct outcome.
+          claude-session-rescue scan && exit 1 || true
+          claude-session-rescue scan 2>&1 | grep -q "No session store found"
+          echo "Missing store handled cleanly."
+
+  read-only-invariant:
+    name: read-only invariant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: The store is never modified
+        # Called out as its own job because it is the promise on the front page
+        # of the README. If this one goes red, the tool's core claim is false.
+        run: |
+          python -m pytest -v \
+            tests/test_cli.py::test_the_store_is_never_modified \
+            tests/test_cli.py::test_writing_into_the_session_store_is_refused \
+            tests/test_cli.py::test_writing_into_claude_home_is_refused \
+            tests/test_cli.py::test_export_refuses_to_write_into_the_store
